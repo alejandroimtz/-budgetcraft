@@ -1,6 +1,6 @@
 // routes/goalRoutes.js
 const { Router } = require('express');
-const { verificarToken } = require('../middlewares/auth.js');
+const { verificarToken } = require('../middleware/auth.js');
 const { obtenerMetas, crearMeta, actualizarMeta, eliminarMeta, agregarDineroMeta } = require('../controllers/goalController.js');
 
 const router = Router();

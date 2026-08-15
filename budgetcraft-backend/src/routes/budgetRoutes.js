@@ -1,7 +1,7 @@
 // routes/budgetRoutes.js
 const { Router } = require('express');
 const { apply50_30_20Rule, getUserBudgets, resetBudgetAlerts } = require('../controllers/budgetController.js');
-const { verificarToken } = require('../middlewares/auth.js');
+const { verificarToken } = require('../middleware/auth.js');
 
 const router = Router();
 

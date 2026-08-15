@@ -1,7 +1,7 @@
 // src/routes/transactionRoutes.js
 const express = require('express');
 const router = express.Router();
-const { verificarToken } = require('../middlewares/auth');
+const { verificarToken } = require('../middleware/auth');
 const {
   obtenerCategorias,
   crearTransaccion,

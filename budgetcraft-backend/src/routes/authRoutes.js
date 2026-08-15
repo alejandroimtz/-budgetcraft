@@ -2,7 +2,7 @@
 const express = require('express');
 const router = express.Router();
 const { registrarUsuario, iniciarSesion, obtenerPerfil } = require('../controllers/authController');
-const { verificarToken } = require('../middlewares/auth');
+const { verificarToken } = require('../middleware/auth');
 
 // Rutas PÚBLICAS (NO llevan verificarToken)
 router.post('/register', registrarUsuario);

@@ -11,6 +11,8 @@ import {
 } from 'lucide-react';
 import { BudgetAlerts } from '../components/budget/BudgetAlerts';
 import GoalsPage from './GoalsPage';
+import WeeklyCalendar from '../components/budget/WeeklyCalendar';
+import { getPresupuestoSemanal, destinarPresupuestoSemanal } from '../services/budgetSemanalService';
 
 // Paleta de colores sobrios y mate para categorías
 const CATEGORY_PALETTE = [
@@ -23,6 +25,7 @@ const CATEGORY_PALETTE = [
   '#b45309', // Ámbar cálido
   '#475569'  // Gris pizarra
 ];
+
 
 export default function Dashboard() {
   const { user, logout } = useAuth();
@@ -49,10 +52,16 @@ export default function Dashboard() {
   const [nuevaCategoria, setNuevaCategoria] = useState('');
   const [colorCategoria, setColorCategoria] = useState(CATEGORY_PALETTE[0]);
 
-  // Estado Presupuesto Semanal
-  const [presupuestoSemanal, setPresupuestoSemanal] = useState(2000);
+  // Estado Presupuesto Semanal (persistido en backend vía weekly_budgets)
+  const [presupuestoSemanal, setPresupuestoSemanal] = useState(0);
   const [editingPresupuesto, setEditingPresupuesto] = useState(false);
-  const [tempPresupuesto, setTempPresupuesto] = useState('2000');
+  const [tempPresupuesto, setTempPresupuesto] = useState('');
+  const [guardandoPresupuesto, setGuardandoPresupuesto] = useState(false);
+
+  // Estado Filtro Historial
+  const [filtroHistorial, setFiltroHistorial] = useState('todos');
+  const [filtroFechaInicio, setFiltroFechaInicio] = useState('');
+  const [filtroFechaFin, setFiltroFechaFin] = useState('');
 
   // Estado Modal Regla 50/30/20
   const [showRuleModal, setShowRuleModal] = useState(false);
@@ -74,20 +83,47 @@ export default function Dashboard() {
   const fetchDashboardData = async () => {
     try {
       setLoading(true);
-      const [sumRes, txRes, catRes] = await Promise.all([
+      const [sumRes, txRes, catRes, presupuestoRes] = await Promise.all([
         api.get('/dashboard/summary'),
         api.get('/transactions'),
-        api.get('/categories')
+        api.get('/categories'),
+        getPresupuestoSemanal()
       ]);
       setSummary(sumRes.data.data);
       setTransactions(txRes.data.data);
       setCategories(catRes.data.data);
+      setPresupuestoSemanal(parseFloat(presupuestoRes.data.monto_destinado));
     } catch (err) {
       console.error('Error al cargar datos:', err);
     } finally {
       setLoading(false);
     }
   };
+
+  // Genera un texto descriptivo del rango de fechas según el filtro seleccionado
+  const rangoFiltroTexto = useMemo(() => {
+    const hoy = new Date();
+    const opcionesCorta = { day: 'numeric', month: 'short' };
+    const opcionesLarga = { day: 'numeric', month: 'long', year: 'numeric' };
+
+    if (filtroHistorial === 'dia') {
+      return hoy.toLocaleDateString('es-MX', { weekday: 'long', ...opcionesLarga });
+    }
+
+    if (filtroHistorial === 'semana') {
+      const { inicio, fin } = getWeekRange(hoy);
+      // Sumamos la hora local para evitar el corrimiento de un día por UTC
+      const fechaInicio = new Date(inicio + 'T00:00:00');
+      const fechaFin = new Date(fin + 'T00:00:00');
+      return `Del ${fechaInicio.toLocaleDateString('es-MX', opcionesCorta)} al ${fechaFin.toLocaleDateString('es-MX', opcionesCorta)}`;
+    }
+
+    if (filtroHistorial === 'mes') {
+      return hoy.toLocaleDateString('es-MX', { month: 'long', year: 'numeric' });
+    }
+
+    return null; // 'todos' no necesita subtítulo
+  }, [filtroHistorial]);
 
   // CÁLCULOS SEMANALES & ANÁLISIS
   const statsSemanales = useMemo(() => {
@@ -123,6 +159,63 @@ export default function Dashboard() {
       promedioDiario
     };
   }, [transactions]);
+
+  const toLocalDateString = (date) => {
+    const d = new Date(date);
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  const getWeekRange = (date) => {
+    const d = new Date(date);
+    const day = d.getDay();
+    const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+    const start = new Date(d.setDate(diff));
+    const end = new Date(d.setDate(diff + 6));
+    return {
+      inicio: toLocalDateString(start),
+      fin: toLocalDateString(end)
+    };
+  };
+
+  const getMonthRange = (date) => {
+    const d = new Date(date);
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const inicio = `${year}-${month}-01`;
+    const ultimoDia = new Date(year, d.getMonth() + 1, 0).getDate();
+    const fin = `${year}-${month}-${String(ultimoDia).padStart(2, '0')}`;
+    return { inicio, fin };
+  };
+
+  const filteredTransactions = useMemo(() => {
+    const hoy = new Date();
+
+    return transactions.filter(t => {
+      const txDate = new Date(t.fecha);
+      const txDateStr = toLocalDateString(txDate);
+
+      if (filtroHistorial === 'todos') return true;
+
+      if (filtroHistorial === 'dia') {
+        return txDateStr === toLocalDateString(hoy);
+      }
+
+      if (filtroHistorial === 'semana') {
+        const { inicio, fin } = getWeekRange(hoy);
+        return txDateStr >= inicio && txDateStr <= fin;
+      }
+
+      if (filtroHistorial === 'mes') {
+        const { inicio, fin } = getMonthRange(hoy);
+        return txDateStr >= inicio && txDateStr <= fin;
+      }
+
+      return true;
+    });
+  }, [transactions, filtroHistorial]);
 
   const handleMontoChange = (e) => {
     const value = e.target.value;
@@ -200,6 +293,34 @@ export default function Dashboard() {
     }
   };
 
+  const handleDestinarPresupuesto = async () => {
+    const valor = parseFloat(tempPresupuesto) || 0;
+
+    if (valor <= 0) {
+      alert('Ingresa un monto válido mayor a 0.');
+      return;
+    }
+
+    if (valor > summary.balance_total) {
+      alert('No cuentas con saldo suficiente en tu balance total para destinar ese monto.');
+      return;
+    }
+
+    try {
+      setGuardandoPresupuesto(true);
+      const res = await destinarPresupuestoSemanal(valor);
+      setPresupuestoSemanal(parseFloat(res.data.monto_destinado));
+      setTempPresupuesto('');
+      setEditingPresupuesto(false);
+      fetchDashboardData();
+    } catch (err) {
+      console.error('Error al destinar presupuesto:', err);
+      alert(err.response?.data?.error || 'Ocurrió un error al destinar el presupuesto. Intenta de nuevo.');
+    } finally {
+      setGuardandoPresupuesto(false);
+    }
+  };
+
   const formatCurrency = (value) => {
     return new Intl.NumberFormat('es-MX', {
       style: 'currency',
@@ -225,28 +346,27 @@ export default function Dashboard() {
   }
 
   return (
-    <div className={`min-h-screen flex flex-col relative pb-20 sm:pb-8 transition-colors duration-300 ${darkMode ? 'bg-slate-950 text-slate-100' : 'bg-zinc-100/90 text-stone-800'
+    <div className={`min-h-screen flex flex-col relative pb-24 sm:pb-8 transition-colors duration-300 ${darkMode ? 'bg-slate-950 text-slate-100' : 'bg-zinc-100/90 text-stone-800'
       }`}>
       {/* NAVBAR */}
-      <header className={`px-4 sm:px-6 lg:px-8 py-4 sticky top-0 z-40 backdrop-blur-md border-b transition-colors duration-300 ${darkMode ? 'bg-slate-900/90 border-slate-800/80' : 'bg-stone-50/90 border-stone-200/80 shadow-sm'
+      <header className={`px-3 sm:px-6 lg:px-8 py-3 sm:py-4 sticky top-0 z-40 backdrop-blur-md border-b transition-colors duration-300 ${darkMode ? 'bg-slate-900/90 border-slate-800/80' : 'bg-stone-50/90 border-stone-200/80 shadow-sm'
         }`}>
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
-          <div className="flex items-center space-x-3">
-            <div className={`p-2 rounded-xl border ${darkMode ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-teal-100/60 border-teal-200 text-teal-800'}`}>
-              <Wallet className="w-6 h-6" />
+        <div className="max-w-7xl mx-auto flex items-center justify-between gap-3">
+          <div className="flex items-center space-x-2 sm:space-x-3">
+            <div className={`p-1.5 sm:p-2 rounded-xl border ${darkMode ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-teal-100/60 border-teal-200 text-teal-800'}`}>
+              <Wallet className="w-5 h-5 sm:w-6 sm:h-6" />
             </div>
-            <span className={`text-xl font-bold bg-gradient-to-r ${darkMode ? 'from-emerald-400 to-teal-300' : 'from-teal-800 to-emerald-700'} bg-clip-text text-transparent`}>
+            <span className={`text-base sm:text-xl font-bold bg-gradient-to-r ${darkMode ? 'from-emerald-400 to-teal-300' : 'from-teal-800 to-emerald-700'} bg-clip-text text-transparent`}>
               BudgetCraft
             </span>
           </div>
 
-          <div className="flex items-center space-x-2 sm:space-x-3">
-            {/* TOGGLE TEMA */}
+          <div className="flex items-center space-x-1.5 sm:space-x-2 md:space-x-3">
             <button
               onClick={toggleTheme}
-              className={`p-2.5 rounded-xl border transition-all cursor-pointer ${darkMode
-                  ? 'bg-slate-800/80 text-amber-400 border-slate-700/80 hover:bg-slate-800'
-                  : 'bg-stone-200/60 text-stone-700 border-stone-300 hover:bg-stone-200'
+              className={`p-2 sm:p-2.5 rounded-xl border transition-all cursor-pointer ${darkMode
+                ? 'bg-slate-800/80 text-amber-400 border-slate-700/80 hover:bg-slate-800'
+                : 'bg-stone-200/60 text-stone-700 border-stone-300 hover:bg-stone-200'
                 }`}
               title={darkMode ? 'Cambiar a Modo Claro (Mate)' : 'Cambiar a Modo Oscuro'}
             >
@@ -261,9 +381,9 @@ export default function Dashboard() {
 
             <button
               onClick={() => setShowAiModal(true)}
-              className={`p-2.5 rounded-xl transition-all border cursor-pointer flex items-center space-x-2 ${darkMode
-                  ? 'bg-slate-800/80 hover:bg-slate-800 text-emerald-400 border-slate-700/80'
-                  : 'bg-teal-100/60 hover:bg-teal-200/70 text-teal-900 border-teal-300/80'
+              className={`p-2 sm:p-2.5 rounded-xl transition-all border cursor-pointer flex items-center space-x-1 sm:space-x-2 ${darkMode
+                ? 'bg-slate-800/80 hover:bg-slate-800 text-emerald-400 border-slate-700/80'
+                : 'bg-teal-100/60 hover:bg-teal-200/70 text-teal-900 border-teal-300/80'
                 }`}
               title="Asistente IA"
             >
@@ -273,66 +393,66 @@ export default function Dashboard() {
 
             <button
               onClick={logout}
-              className={`p-2.5 rounded-xl transition-colors cursor-pointer border ${darkMode
-                  ? 'text-slate-400 hover:text-rose-400 hover:bg-slate-800 border-transparent'
-                  : 'text-stone-500 hover:text-rose-700 hover:bg-rose-100/50 border-transparent'
+              className={`p-2 sm:p-2.5 rounded-xl transition-colors cursor-pointer border ${darkMode
+                ? 'text-slate-400 hover:text-rose-400 hover:bg-slate-800 border-transparent'
+                : 'text-stone-500 hover:text-rose-700 hover:bg-rose-100/50 border-transparent'
                 }`}
               title="Cerrar Sesión"
             >
-              <LogOut className="w-5 h-5" />
+              <LogOut className="w-4 h-4 sm:w-5 sm:h-5" />
             </button>
           </div>
         </div>
       </header>
 
       {/* CONTENIDO PRINCIPAL */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 space-y-6">
+      <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-6 lg:py-8 space-y-4 sm:space-y-6">
 
         {/* CONTROLES DE NAVEGACIÓN (SECCIONES) */}
-        <div className={`p-1.5 rounded-2xl border inline-flex space-x-1 ${darkMode ? 'bg-slate-900/80 border-slate-800' : 'bg-stone-200/60 border-stone-300/70'
+        <div className={`p-1.5 rounded-2xl border inline-flex space-x-1 overflow-x-auto ${darkMode ? 'bg-slate-900/80 border-slate-800' : 'bg-stone-200/60 border-stone-300/70'
           }`}>
           <button
             onClick={() => setActiveTab('inicio')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-2 cursor-pointer ${activeTab === 'inicio'
-                ? darkMode
-                  ? 'bg-emerald-500 text-slate-950 shadow-md'
-                  : 'bg-teal-800 text-white shadow-md'
-                : darkMode
-                  ? 'text-slate-400 hover:text-slate-200'
-                  : 'text-stone-600 hover:text-stone-900'
+            className={`px-3 sm:px-4 py-2 rounded-xl text-[10px] sm:text-xs font-bold transition-all flex items-center space-x-1 sm:space-x-2 cursor-pointer whitespace-nowrap ${activeTab === 'inicio'
+              ? darkMode
+                ? 'bg-emerald-500 text-slate-950 shadow-md'
+                : 'bg-teal-800 text-white shadow-md'
+              : darkMode
+                ? 'text-slate-400 hover:text-slate-200'
+                : 'text-stone-600 hover:text-stone-900'
               }`}
           >
-            <LayoutDashboard className="w-4 h-4" />
+            <LayoutDashboard className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
             <span>Inicio</span>
           </button>
 
           <button
             onClick={() => setActiveTab('presupuesto')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-2 cursor-pointer ${activeTab === 'presupuesto'
-                ? darkMode
-                  ? 'bg-emerald-500 text-slate-950 shadow-md'
-                  : 'bg-teal-800 text-white shadow-md'
-                : darkMode
-                  ? 'text-slate-400 hover:text-slate-200'
-                  : 'text-stone-600 hover:text-stone-900'
+            className={`px-3 sm:px-4 py-2 rounded-xl text-[10px] sm:text-xs font-bold transition-all flex items-center space-x-1 sm:space-x-2 cursor-pointer whitespace-nowrap ${activeTab === 'presupuesto'
+              ? darkMode
+                ? 'bg-emerald-500 text-slate-950 shadow-md'
+                : 'bg-teal-800 text-white shadow-md'
+              : darkMode
+                ? 'text-slate-400 hover:text-slate-200'
+                : 'text-stone-600 hover:text-stone-900'
               }`}
           >
-            <CalendarRange className="w-4 h-4" />
-            <span>Presupuesto Semanal</span>
+            <CalendarRange className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+            <span>Presupuesto</span>
           </button>
 
           <button
             onClick={() => setActiveTab('metas')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-2 cursor-pointer ${activeTab === 'metas'
-                ? darkMode
-                  ? 'bg-emerald-500 text-slate-950 shadow-md'
-                  : 'bg-teal-800 text-white shadow-md'
-                : darkMode
-                  ? 'text-slate-400 hover:text-slate-200'
-                  : 'text-stone-600 hover:text-stone-900'
+            className={`px-3 sm:px-4 py-2 rounded-xl text-[10px] sm:text-xs font-bold transition-all flex items-center space-x-1 sm:space-x-2 cursor-pointer whitespace-nowrap ${activeTab === 'metas'
+              ? darkMode
+                ? 'bg-emerald-500 text-slate-950 shadow-md'
+                : 'bg-teal-800 text-white shadow-md'
+              : darkMode
+                ? 'text-slate-400 hover:text-slate-200'
+                : 'text-stone-600 hover:text-stone-900'
               }`}
           >
-            <Target className="w-4 h-4" />
+            <Target className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
             <span>Metas</span>
           </button>
         </div>
@@ -402,16 +522,36 @@ export default function Dashboard() {
 
             {/* TABLA HISTORIAL DE MOVIMIENTOS */}
             <div className="space-y-4 pt-2">
-              <div className="flex items-center space-x-3">
-                <Receipt className={`w-5 h-5 ${darkMode ? 'text-slate-400' : 'text-stone-500'}`} />
-                <h2 className={`text-lg font-bold ${darkMode ? 'text-slate-200' : 'text-stone-800'}`}>Historial de Movimientos</h2>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-3">
+                  <Receipt className={`w-5 h-5 ${darkMode ? 'text-slate-400' : 'text-stone-500'}`} />
+                  <h2 className={`text-lg font-bold ${darkMode ? 'text-slate-200' : 'text-stone-800'}`}>Historial de Movimientos</h2>
+                </div>
+
+                <div className="flex items-center space-x-3">
+                  {rangoFiltroTexto && (
+                    <span className={`text-xs font-medium capitalize ${darkMode ? 'text-slate-400' : 'text-stone-500'}`}>
+                      {rangoFiltroTexto}
+                    </span>
+                  )}
+                  <select
+                    value={filtroHistorial}
+                    onChange={(e) => setFiltroHistorial(e.target.value)}
+                    className={`text-xs font-semibold px-3 py-1.5 rounded-lg border cursor-pointer ${darkMode ? 'bg-slate-900 border-slate-700 text-slate-200' : 'bg-stone-100 border-stone-300 text-stone-800'}`}
+                  >
+                    <option value="todos">Todos</option>
+                    <option value="dia">Día</option>
+                    <option value="semana">Semana</option>
+                    <option value="mes">Mes</option>
+                  </select>
+                </div>
               </div>
 
               <div className={`rounded-2xl overflow-hidden border shadow-lg ${darkMode ? 'bg-slate-900/60 border-slate-800/80' : 'bg-stone-50 border-stone-200/80 shadow-stone-200/50'
                 }`}>
-                {transactions.length === 0 ? (
+                {filteredTransactions.length === 0 ? (
                   <div className="p-12 text-center">
-                    <div className="text-4xl mb-3">💳</div>
+                    <div className="text-4xl mb-3">💰</div>
                     <p className={`font-medium mb-1 ${darkMode ? 'text-slate-400' : 'text-stone-600'}`}>No tienes movimientos registrados</p>
                     <p className={`text-xs ${darkMode ? 'text-slate-500' : 'text-stone-400'}`}>Toca el botón flotante (+) para agregar uno.</p>
                   </div>
@@ -429,7 +569,7 @@ export default function Dashboard() {
                         </tr>
                       </thead>
                       <tbody className={`divide-y text-sm ${darkMode ? 'divide-slate-800/60' : 'divide-stone-200/60'}`}>
-                        {transactions.map((t) => (
+                        {filteredTransactions.map((t) => (
                           <tr key={t.id} className={darkMode ? 'hover:bg-slate-800/20' : 'hover:bg-stone-100/80'}>
                             <td className={`p-4 font-medium ${darkMode ? 'text-slate-200' : 'text-stone-800'}`}>{t.descripcion}</td>
                             <td className="p-4">
@@ -438,8 +578,8 @@ export default function Dashboard() {
                                 {t.categoria_nombre || 'Sin categoría'}
                               </span>
                             </td>
-                            <td className={`p-4 text-xs ${darkMode ? 'text-slate-400' : 'text-stone-500'}`}>
-                              {new Date(t.fecha).toLocaleDateString('es-MX', { day: 'numeric', month: 'short', year: 'numeric' })}
+                            <td className={`p-4 text-xs capitalize ${darkMode ? 'text-slate-400' : 'text-stone-500'}`}>
+                              {new Date(t.fecha).toLocaleDateString('es-MX', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}
                             </td>
                             <td className={`p-4 text-right font-bold ${t.tipo === 'ingreso' ? 'text-teal-800 dark:text-emerald-400' : 'text-rose-800 dark:text-rose-400'}`}>
                               {t.tipo === 'ingreso' ? '+' : '-'}{formatCurrency(parseFloat(t.monto))}
@@ -478,141 +618,167 @@ export default function Dashboard() {
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* CONTROL DE PRESUPUESTO SEMANAL */}
-            <div className={`p-6 rounded-2xl border flex flex-col justify-between ${darkMode ? 'bg-slate-900/60 border-slate-800/80' : 'bg-stone-50 border-stone-200/80 shadow-sm'
-              }`}>
-              <div>
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center space-x-2.5">
-                    <div className={`p-2 rounded-xl border ${darkMode ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-teal-100/60 border-teal-200 text-teal-800'}`}>
-                      <Target className="w-5 h-5" />
-                    </div>
-                    <h3 className={`font-bold ${darkMode ? 'text-slate-200' : 'text-stone-800'}`}>Presupuesto Semanal</h3>
-                  </div>
-                  {!editingPresupuesto ? (
-                    <button
-                      onClick={() => setEditingPresupuesto(true)}
-                      className="text-xs text-teal-800 dark:text-emerald-400 hover:underline cursor-pointer font-semibold"
-                    >
-                      Ajustar Meta
-                    </button>
-                  ) : (
-                    <button
-                      onClick={() => {
-                        setPresupuestoSemanal(parseFloat(tempPresupuesto) || 0);
-                        setEditingPresupuesto(false);
-                      }}
-                      className="text-xs bg-teal-800 dark:bg-emerald-500 text-white dark:text-slate-950 font-bold px-2.5 py-1 rounded-lg cursor-pointer"
-                    >
-                      OK
-                    </button>
-                  )}
-                </div>
-
-                {editingPresupuesto ? (
-                  <input
-                    type="number"
-                    value={tempPresupuesto}
-                    onChange={(e) => setTempPresupuesto(e.target.value)}
-                    className={`w-full rounded-xl p-2.5 text-xl font-bold mb-4 focus:outline-none border ${darkMode ? 'bg-slate-950 border-slate-800 text-slate-100' : 'bg-stone-100 border-stone-300 text-stone-900 focus:border-teal-700'
-                      }`}
-                  />
-                ) : (
-                  <div className="mb-4">
-                    <p className={`text-3xl font-bold ${darkMode ? 'text-slate-100' : 'text-stone-900'}`}>{formatCurrency(presupuestoSemanal)}</p>
-                    <p className={`text-xs mt-1 ${darkMode ? 'text-slate-400' : 'text-stone-500'}`}>
-                      Gastado esta semana: <strong className="text-rose-800 dark:text-rose-400">{formatCurrency(statsSemanales.totalGastadoSemana)}</strong>
-                    </p>
-                  </div>
-                )}
-
-                {/* BARRA DE PROGRESO */}
-                <div className="space-y-2">
-                  <div className="flex justify-between text-xs font-semibold">
-                    <span className={darkMode ? 'text-slate-400' : 'text-stone-500'}>Consumo Semanal</span>
-                    <span className={porcentajePresupuesto > 90 ? 'text-rose-800 dark:text-rose-400' : 'text-teal-800 dark:text-emerald-400'}>
-                      {porcentajePresupuesto}%
-                    </span>
-                  </div>
-                  <div className={`w-full h-3 rounded-full overflow-hidden border ${darkMode ? 'bg-slate-950 border-slate-800' : 'bg-stone-200 border-stone-300/60'
-                    }`}>
-                    <div
-                      className={`h-full transition-all duration-500 ${porcentajePresupuesto > 90 ? 'bg-rose-700 dark:bg-rose-500' : 'bg-teal-700 dark:bg-emerald-500'
-                        }`}
-                      style={{ width: `${porcentajePresupuesto}%` }}
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div className={`mt-6 pt-4 border-t text-xs flex items-center space-x-2 ${darkMode ? 'border-slate-800/80 text-slate-400' : 'border-stone-200 text-stone-600'
+              {/* CONTROL DE PRESUPUESTO SEMANAL */}
+              <div className={`p-6 rounded-2xl border flex flex-col justify-between ${darkMode ? 'bg-slate-900/60 border-slate-800/80' : 'bg-stone-50 border-stone-200/80 shadow-sm'
                 }`}>
-                <AlertCircle className="w-4 h-4 text-teal-700 dark:text-emerald-400 flex-shrink-0" />
-                <span>
-                  {presupuestoSemanal - statsSemanales.totalGastadoSemana >= 0
-                    ? `Disponibles: ${formatCurrency(presupuestoSemanal - statsSemanales.totalGastadoSemana)} para los próximos días.`
-                    : 'Has rebasado tu presupuesto fijado.'}
-                </span>
-              </div>
-            </div>
-
-            {/* ESTADÍSTICAS & DESGLOSE SEMANAL */}
-            <div className={`lg:col-span-2 p-6 rounded-2xl border flex flex-col justify-between ${darkMode ? 'bg-slate-900/60 border-slate-800/80' : 'bg-stone-50 border-stone-200/80 shadow-sm'
-              }`}>
-              <div>
-                <div className="flex items-center space-x-2.5 mb-4">
-                  <div className={`p-2 rounded-xl border ${darkMode ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-teal-100/60 border-teal-200 text-teal-800'}`}>
-                    <PieChart className="w-5 h-5" />
-                  </div>
-                  <h3 className={`font-bold ${darkMode ? 'text-slate-200' : 'text-stone-800'}`}>Análisis de los Últimos 7 Días</h3>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
-                  <div className={`p-4 rounded-xl border ${darkMode ? 'bg-slate-950/60 border-slate-800' : 'bg-stone-200/50 border-stone-300/70'}`}>
-                    <p className={`text-xs font-semibold uppercase ${darkMode ? 'text-slate-400' : 'text-stone-500'}`}>Mayor Gasto En</p>
-                    <p className={`text-xl font-bold mt-1 ${darkMode ? 'text-slate-100' : 'text-stone-800'}`}>{statsSemanales.mayorGastoCat.nombre}</p>
-                    <p className="text-xs text-rose-800 dark:text-rose-400 mt-0.5">{formatCurrency(statsSemanales.mayorGastoCat.monto)} gastados</p>
-                  </div>
-
-                  <div className={`p-4 rounded-xl border ${darkMode ? 'bg-slate-950/60 border-slate-800' : 'bg-stone-200/50 border-stone-300/70'}`}>
-                    <p className={`text-xs font-semibold uppercase ${darkMode ? 'text-slate-400' : 'text-stone-500'}`}>Promedio Diario</p>
-                    <p className={`text-xl font-bold mt-1 ${darkMode ? 'text-slate-100' : 'text-stone-800'}`}>{formatCurrency(statsSemanales.promedioDiario)}</p>
-                    <p className={`text-xs mt-0.5 ${darkMode ? 'text-slate-400' : 'text-stone-500'}`}>Calculado sobre 7 días</p>
-                  </div>
-                </div>
-
-                {/* DESGLOSE POR CATEGORÍA */}
-                <div className="space-y-2">
-                  <p className={`text-xs font-semibold uppercase tracking-wider ${darkMode ? 'text-slate-400' : 'text-stone-500'}`}>Gastos por Categoría (Semana)</p>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                    {Object.entries(statsSemanales.gastosPorCat).length === 0 ? (
-                      <p className={`text-xs col-span-full ${darkMode ? 'text-slate-500' : 'text-stone-400'}`}>Sin consumos en esta semana.</p>
+                <div>
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center space-x-2.5">
+                      <div className={`p-2 rounded-xl border ${darkMode ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-teal-100/60 border-teal-200 text-teal-800'}`}>
+                        <Target className="w-5 h-5" />
+                      </div>
+                      <h3 className={`font-bold ${darkMode ? 'text-slate-200' : 'text-stone-800'}`}>Presupuesto Semanal</h3>
+                    </div>
+                    {!editingPresupuesto ? (
+                      <button
+                        onClick={() => {
+                          setTempPresupuesto('');
+                          setEditingPresupuesto(true);
+                        }}
+                        className="text-xs text-teal-800 dark:text-emerald-400 hover:underline cursor-pointer font-semibold"
+                      >
+                        Destinar
+                      </button>
                     ) : (
-                      Object.entries(statsSemanales.gastosPorCat).map(([cat, monto]) => (
-                        <div key={cat} className={`p-2.5 rounded-xl text-xs border ${darkMode ? 'bg-slate-950/40 border-slate-800/80' : 'bg-stone-200/40 border-stone-300/60'
-                          }`}>
-                          <span className={`block truncate ${darkMode ? 'text-slate-400' : 'text-stone-500'}`}>{cat}</span>
-                          <span className={`font-bold ${darkMode ? 'text-slate-200' : 'text-stone-800'}`}>{formatCurrency(monto)}</span>
-                        </div>
-                      ))
+                      <div className="flex items-center space-x-2">
+                        <button
+                          onClick={() => {
+                            setTempPresupuesto('');
+                            setEditingPresupuesto(false);
+                          }}
+                          disabled={guardandoPresupuesto}
+                          className={`text-xs font-bold px-2.5 py-1 rounded-lg cursor-pointer disabled:opacity-50 ${darkMode ? 'bg-slate-800 text-slate-300 hover:bg-slate-700' : 'bg-stone-200 text-stone-700 hover:bg-stone-300/70'
+                            }`}
+                        >
+                          Cancelar
+                        </button>
+                        <button
+                          onClick={handleDestinarPresupuesto}
+                          disabled={guardandoPresupuesto}
+                          className="text-xs bg-teal-800 dark:bg-emerald-500 text-white dark:text-slate-950 font-bold px-2.5 py-1 rounded-lg cursor-pointer disabled:opacity-50"
+                        >
+                          {guardandoPresupuesto ? 'Guardando...' : 'Confirmar'}
+                        </button>
+                      </div>
                     )}
                   </div>
+
+                  {editingPresupuesto ? (
+                    <div className="mb-4">
+                      <input
+                        type="number"
+                        autoFocus
+                        placeholder="¿Cuánto deseas destinar esta semana?"
+                        value={tempPresupuesto}
+                        onChange={(e) => setTempPresupuesto(e.target.value)}
+                        className={`w-full rounded-xl p-2.5 text-xl font-bold focus:outline-none border ${darkMode ? 'bg-slate-950 border-slate-800 text-slate-100' : 'bg-stone-100 border-stone-300 text-stone-900 focus:border-teal-700'
+                          }`}
+                      />
+                      <p className={`text-xs mt-1.5 ${darkMode ? 'text-slate-400' : 'text-stone-500'}`}>
+                        Balance disponible: <strong>{formatCurrency(summary.balance_total)}</strong>
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="mb-4">
+                      <p className={`text-3xl font-bold ${darkMode ? 'text-slate-100' : 'text-stone-900'}`}>{formatCurrency(presupuestoSemanal)}</p>
+                      <p className={`text-xs mt-1 ${darkMode ? 'text-slate-400' : 'text-stone-500'}`}>
+                        Balance disponible: <strong className={darkMode ? 'text-slate-200' : 'text-stone-800'}>{formatCurrency(summary.balance_total)}</strong>
+                      </p>
+                      <p className={`text-xs mt-1 ${darkMode ? 'text-slate-400' : 'text-stone-500'}`}>
+                        Gastado esta semana: <strong className="text-rose-800 dark:text-rose-400">{formatCurrency(statsSemanales.totalGastadoSemana)}</strong>
+                      </p>
+                    </div>
+                  )}
+
+                  {/* BARRA DE PROGRESO */}
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-xs font-semibold">
+                      <span className={darkMode ? 'text-slate-400' : 'text-stone-500'}>Consumo Semanal</span>
+                      <span className={porcentajePresupuesto > 90 ? 'text-rose-800 dark:text-rose-400' : 'text-teal-800 dark:text-emerald-400'}>
+                        {porcentajePresupuesto}%
+                      </span>
+                    </div>
+                    <div className={`w-full h-3 rounded-full overflow-hidden border ${darkMode ? 'bg-slate-950 border-slate-800' : 'bg-stone-200 border-stone-300/60'
+                      }`}>
+                      <div
+                        className={`h-full transition-all duration-500 ${porcentajePresupuesto > 90 ? 'bg-rose-700 dark:bg-rose-500' : 'bg-teal-700 dark:bg-emerald-500'
+                          }`}
+                        style={{ width: `${porcentajePresupuesto}%` }}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className={`mt-6 pt-4 border-t text-xs flex items-center space-x-2 ${darkMode ? 'border-slate-800/80 text-slate-400' : 'border-stone-200 text-stone-600'
+                  }`}>
+                  <AlertCircle className="w-4 h-4 text-teal-700 dark:text-emerald-400 flex-shrink-0" />
+                  <span>
+                    {presupuestoSemanal - statsSemanales.totalGastadoSemana >= 0
+                      ? `Disponibles: ${formatCurrency(presupuestoSemanal - statsSemanales.totalGastadoSemana)} para los próximos días.`
+                      : 'Has rebasado tu presupuesto fijado.'}
+                  </span>
                 </div>
               </div>
 
-              <div className={`mt-4 pt-3 border-t flex items-center space-x-2 text-xs p-3 rounded-xl border ${darkMode
+              {/* ESTADÍSTICAS & DESGLOSE SEMANAL */}
+              <div className={`lg:col-span-2 p-6 rounded-2xl border flex flex-col justify-between ${darkMode ? 'bg-slate-900/60 border-slate-800/80' : 'bg-stone-50 border-stone-200/80 shadow-sm'
+                }`}>
+                <div>
+                  <div className="flex items-center space-x-2.5 mb-4">
+                    <div className={`p-2 rounded-xl border ${darkMode ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-teal-100/60 border-teal-200 text-teal-800'}`}>
+                      <PieChart className="w-5 h-5" />
+                    </div>
+                    <h3 className={`font-bold ${darkMode ? 'text-slate-200' : 'text-stone-800'}`}>Análisis de los Últimos 7 Días</h3>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+                    <div className={`p-4 rounded-xl border ${darkMode ? 'bg-slate-950/60 border-slate-800' : 'bg-stone-200/50 border-stone-300/70'}`}>
+                      <p className={`text-xs font-semibold uppercase ${darkMode ? 'text-slate-400' : 'text-stone-500'}`}>Mayor Gasto En</p>
+                      <p className={`text-xl font-bold mt-1 ${darkMode ? 'text-slate-100' : 'text-stone-800'}`}>{statsSemanales.mayorGastoCat.nombre}</p>
+                      <p className="text-xs text-rose-800 dark:text-rose-400 mt-0.5">{formatCurrency(statsSemanales.mayorGastoCat.monto)} gastados</p>
+                    </div>
+
+                    <div className={`p-4 rounded-xl border ${darkMode ? 'bg-slate-950/60 border-slate-800' : 'bg-stone-200/50 border-stone-300/70'}`}>
+                      <p className={`text-xs font-semibold uppercase ${darkMode ? 'text-slate-400' : 'text-stone-500'}`}>Promedio Diario</p>
+                      <p className={`text-xl font-bold mt-1 ${darkMode ? 'text-slate-100' : 'text-stone-800'}`}>{formatCurrency(statsSemanales.promedioDiario)}</p>
+                      <p className={`text-xs mt-0.5 ${darkMode ? 'text-slate-400' : 'text-stone-500'}`}>Calculado sobre 7 días</p>
+                    </div>
+                  </div>
+
+                  {/* DESGLOSE POR CATEGORÍA */}
+                  <div className="space-y-2">
+                    <p className={`text-xs font-semibold uppercase tracking-wider ${darkMode ? 'text-slate-400' : 'text-stone-500'}`}>Gastos por Categoría (Semana)</p>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                      {Object.entries(statsSemanales.gastosPorCat).length === 0 ? (
+                        <p className={`text-xs col-span-full ${darkMode ? 'text-slate-500' : 'text-stone-400'}`}>Sin consumos en esta semana.</p>
+                      ) : (
+                        Object.entries(statsSemanales.gastosPorCat).map(([cat, monto]) => (
+                          <div key={cat} className={`p-2.5 rounded-xl text-xs border ${darkMode ? 'bg-slate-950/40 border-slate-800/80' : 'bg-stone-200/40 border-stone-300/60'
+                            }`}>
+                            <span className={`block truncate ${darkMode ? 'text-slate-400' : 'text-stone-500'}`}>{cat}</span>
+                            <span className={`font-bold ${darkMode ? 'text-slate-200' : 'text-stone-800'}`}>{formatCurrency(monto)}</span>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className={`mt-4 pt-3 border-t flex items-center space-x-2 text-xs p-3 rounded-xl border ${darkMode
                   ? 'border-slate-800/80 text-emerald-300 bg-emerald-500/10'
                   : 'border-teal-200 text-teal-900 bg-teal-100/40'
-                }`}>
-                <Lightbulb className="w-4 h-4 flex-shrink-0 text-teal-700 dark:text-emerald-400" />
-                <span>
-                  {statsSemanales.mayorGastoCat.monto > 0
-                    ? `Sugerencia: Puedes optimizar tus consumos en "${statsSemanales.mayorGastoCat.nombre}" para liberar presupuesto.`
-                    : 'Sigue registrando tus movimientos para obtener sugerencias personalizadas.'}
-                </span>
+                  }`}>
+                  <Lightbulb className="w-4 h-4 flex-shrink-0 text-teal-700 dark:text-emerald-400" />
+                  <span>
+                    {statsSemanales.mayorGastoCat.monto > 0
+                      ? `Sugerencia: Puedes optimizar tus consumos en "${statsSemanales.mayorGastoCat.nombre}" para liberar presupuesto.`
+                      : 'Sigue registrando tus movimientos para obtener sugerencias personalizadas.'}
+                  </span>
+                </div>
               </div>
             </div>
-          </div>
+
+            <WeeklyCalendar transactions={transactions} darkMode={darkMode} />
           </div>
         )}
 
@@ -735,8 +901,8 @@ export default function Dashboard() {
                   type="button"
                   onClick={() => setTipo('gasto')}
                   className={`py-2.5 rounded-xl font-semibold text-sm flex items-center justify-center space-x-2 cursor-pointer ${tipo === 'gasto'
-                      ? 'bg-rose-800 text-white dark:bg-rose-500/20 dark:text-rose-400 border border-rose-700 dark:border-rose-500/30'
-                      : 'text-stone-600 dark:text-slate-500'
+                    ? 'bg-rose-800 text-white dark:bg-rose-500/20 dark:text-rose-400 border border-rose-700 dark:border-rose-500/30'
+                    : 'text-stone-600 dark:text-slate-500'
                     }`}
                 >
                   <TrendingDown className="w-4 h-4" />
@@ -746,8 +912,8 @@ export default function Dashboard() {
                   type="button"
                   onClick={() => setTipo('ingreso')}
                   className={`py-2.5 rounded-xl font-semibold text-sm flex items-center justify-center space-x-2 cursor-pointer ${tipo === 'ingreso'
-                      ? 'bg-teal-800 text-white dark:bg-emerald-500/20 dark:text-emerald-400 border border-teal-700 dark:border-emerald-500/30'
-                      : 'text-stone-600 dark:text-slate-500'
+                    ? 'bg-teal-800 text-white dark:bg-emerald-500/20 dark:text-emerald-400 border border-teal-700 dark:border-emerald-500/30'
+                    : 'text-stone-600 dark:text-slate-500'
                     }`}
                 >
                   <TrendingUp className="w-4 h-4" />
@@ -829,8 +995,8 @@ export default function Dashboard() {
                 <button
                   type="submit"
                   className={`w-1/2 font-bold py-3 rounded-xl text-sm cursor-pointer ${tipo === 'gasto'
-                      ? 'bg-rose-800 text-white dark:bg-rose-500 dark:text-white'
-                      : 'bg-teal-800 text-white dark:bg-emerald-500 dark:text-slate-950'
+                    ? 'bg-rose-800 text-white dark:bg-rose-500 dark:text-white'
+                    : 'bg-teal-800 text-white dark:bg-emerald-500 dark:text-slate-950'
                     }`}
                 >
                   Guardar {tipo === 'gasto' ? 'Gasto' : 'Ingreso'}
@@ -873,10 +1039,10 @@ export default function Dashboard() {
                 >
                   <div
                     className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-sm ${msg.sender === 'user'
-                        ? 'bg-teal-800 text-white dark:bg-emerald-500 dark:text-slate-950 font-medium rounded-br-none'
-                        : darkMode
-                          ? 'bg-slate-800/80 text-slate-200 border border-slate-700/60 rounded-bl-none'
-                          : 'bg-stone-200/70 text-stone-800 border border-stone-300/60 rounded-bl-none'
+                      ? 'bg-teal-800 text-white dark:bg-emerald-500 dark:text-slate-950 font-medium rounded-br-none'
+                      : darkMode
+                        ? 'bg-slate-800/80 text-slate-200 border border-slate-700/60 rounded-bl-none'
+                        : 'bg-stone-200/70 text-stone-800 border border-stone-300/60 rounded-bl-none'
                       }`}
                   >
                     {msg.text}

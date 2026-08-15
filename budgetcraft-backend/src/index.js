@@ -11,6 +11,7 @@ const authRoutes = require('./routes/authRoutes');
 const transactionRoutes = require('./routes/transactionRoutes');
 const aiRoutes = require('./routes/aiRoutes');
 const budgetRoutes = require('./routes/budgetRoutes');
+const budgetSemanalRoutes = require('./routes/budget');
 const goalRoutes = require('./routes/goalRoutes');
 
 const app = express();
@@ -24,6 +25,7 @@ app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1', transactionRoutes);
 app.use('/api/v1/ai', aiRoutes);
 app.use('/api/v1/budgets', budgetRoutes);
+app.use('/api/v1/budget', budgetSemanalRoutes);
 app.use('/api/v1/goals', goalRoutes);
 
 // Health check

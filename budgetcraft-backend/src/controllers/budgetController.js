@@ -24,7 +24,7 @@ const apply50_30_20Rule = async (req, res) => {
     { nombre: 'Ahorro / Deudas (20%)', limite: income * 0.20, color: '#047857' }
   ];
 
-  const client = await db.getClient();
+  const client = await db.pool.connect();
 
   try {
     await client.query('BEGIN');

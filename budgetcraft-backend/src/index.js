@@ -9,7 +9,9 @@ const db = require('./config/db');
 // Importar rutas
 const authRoutes = require('./routes/authRoutes');
 const transactionRoutes = require('./routes/transactionRoutes');
-const aiRoutes = require('./routes/aiRoutes'); // 👈 Nuevo
+const aiRoutes = require('./routes/aiRoutes');
+const budgetRoutes = require('./routes/budgetRoutes');
+const goalRoutes = require('./routes/goalRoutes');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -20,7 +22,9 @@ app.use(express.json());
 // Registrar Endpoints
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1', transactionRoutes);
-app.use('/api/v1/ai', aiRoutes); // 👈 Nuevo (/api/v1/ai/chat)
+app.use('/api/v1/ai', aiRoutes);
+app.use('/api/v1/budgets', budgetRoutes);
+app.use('/api/v1/goals', goalRoutes);
 
 // Health check
 app.get('/api/v1/health', async (req, res) => {

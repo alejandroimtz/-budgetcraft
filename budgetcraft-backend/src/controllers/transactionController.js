@@ -1,6 +1,76 @@
 // src/controllers/transactionController.js
 const db = require('../config/db');
 
+const checkBudgetAlerts = async (usuario_id) => {
+  try {
+    const result = await db.query(
+      `SELECT 
+        b.id as budget_id,
+        b.limite_mensual,
+        b.alert_80_sent,
+        b.alert_100_sent,
+        c.nombre as categoria_nombre,
+        c.color as categoria_color,
+        COALESCE(SUM(t.monto), 0) as gastado
+       FROM budgets b
+       JOIN categorias c ON b.categoria_id = c.id
+       LEFT JOIN transacciones t 
+         ON t.usuario_id = b.usuario_id 
+         AND t.categoria_id = b.categoria_id 
+         AND t.tipo = 'gasto'
+         AND DATE_TRUNC('month', t.fecha) = DATE_TRUNC('month', CURRENT_DATE)
+       WHERE b.usuario_id = $1
+       GROUP BY b.id, c.nombre, c.color, b.limite_mensual, b.alert_80_sent, b.alert_100_sent`,
+      [usuario_id]
+    );
+
+    const alerts = [];
+    for (const row of result.rows) {
+      const gastado = parseFloat(row.gastado);
+      const limite = parseFloat(row.limite_mensual);
+      const percentage = limite > 0 ? Math.round((gastado / limite) * 100) : 0;
+
+      if (percentage >= 100 && !row.alert_100_sent) {
+        await db.query(
+          'UPDATE budgets SET alert_100_sent = TRUE WHERE id = $1',
+          [row.budget_id]
+        );
+        alerts.push({
+          type: 'danger',
+          message: `Has alcanzado el 100% del presupuesto de ${row.categoria_nombre}`,
+          category: row.categoria_nombre,
+          percentage: 100
+        });
+      } else if (percentage >= 80 && !row.alert_80_sent) {
+        await db.query(
+          'UPDATE budgets SET alert_80_sent = TRUE WHERE id = $1',
+          [row.budget_id]
+        );
+        alerts.push({
+          type: 'warning',
+          message: `Has alcanzado el 80% del presupuesto de ${row.categoria_nombre}`,
+          category: row.categoria_nombre,
+          percentage
+        });
+      } else if (percentage < 80 && row.alert_80_sent) {
+        await db.query(
+          'UPDATE budgets SET alert_80_sent = FALSE WHERE id = $1',
+          [row.budget_id]
+        );
+      } else if (percentage < 100 && row.alert_100_sent) {
+        await db.query(
+          'UPDATE budgets SET alert_100_sent = FALSE WHERE id = $1',
+          [row.budget_id]
+        );
+      }
+    }
+    return alerts;
+  } catch (error) {
+    console.error('Error al verificar alertas de presupuesto:', error);
+    return [];
+  }
+};
+
 // 1. OBTENER TODAS LAS CATEGORÍAS (Para los Select del Frontend)
 const obtenerCategorias = async (req, res) => {
   try {
@@ -40,7 +110,8 @@ const crearTransaccion = async (req, res) => {
     res.status(201).json({
       status: 'success',
       message: 'Transacción registrada correctamente',
-      data: nuevaTransaccion.rows[0]
+      data: nuevaTransaccion.rows[0],
+      alerts: await checkBudgetAlerts(usuario_id)
     });
   } catch (error) {
     console.error('Error al crear transacción:', error);
@@ -102,7 +173,8 @@ const eliminarTransaccion = async (req, res) => {
 
     res.json({
       status: 'success',
-      message: 'Transacción eliminada correctamente'
+      message: 'Transacción eliminada correctamente',
+      alerts: await checkBudgetAlerts(usuario_id)
     });
   } catch (error) {
     console.error('Error al eliminar transacción:', error);

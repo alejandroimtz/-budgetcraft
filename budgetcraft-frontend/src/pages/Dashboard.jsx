@@ -1,13 +1,16 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { useTheme } from '../context/ThemeContext';
 import api from '../api/axios';
 import {
   Wallet, TrendingUp, TrendingDown, DollarSign,
   Plus, Bot, LogOut, Trash2, Send, X, Receipt,
   ArrowUpRight, ArrowDownRight, Sparkles, BarChart3, Loader2,
   FolderPlus, Target, PieChart, Lightbulb, AlertCircle, Check,
-  Sun, Moon, LayoutDashboard, CalendarRange
+  Sun, Moon, LayoutDashboard, CalendarRange, Scale, Wallet as WalletIcon, PiggyBank, ShoppingCart
 } from 'lucide-react';
+import { BudgetAlerts } from '../components/budget/BudgetAlerts';
+import GoalsPage from './GoalsPage';
 
 // Paleta de colores sobrios y mate para categorías
 const CATEGORY_PALETTE = [
@@ -23,32 +26,15 @@ const CATEGORY_PALETTE = [
 
 export default function Dashboard() {
   const { user, logout } = useAuth();
+  const { darkMode, toggleTheme } = useTheme();
 
-  // Control de Secciones / Pestañas ('inicio' | 'presupuesto')
+  // Control de Secciones / Pestañas ('inicio' | 'presupuesto' | 'metas')
   const [activeTab, setActiveTab] = useState('inicio');
 
   const [summary, setSummary] = useState({ total_ingresos: 0, total_gastos: 0, balance_total: 0 });
   const [transactions, setTransactions] = useState([]);
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
-
-  // Estado Tema (Claro / Oscuro)
-  const [darkMode, setDarkMode] = useState(() => {
-    const savedTheme = localStorage.getItem('theme');
-    if (savedTheme) {
-      return savedTheme === 'dark';
-    }
-    const hour = new Date().getHours();
-    return hour < 6 || hour >= 19;
-  });
-
-  const toggleTheme = () => {
-    setDarkMode(prev => {
-      const nextTheme = !prev;
-      localStorage.setItem('theme', nextTheme ? 'dark' : 'light');
-      return nextTheme;
-    });
-  };
 
   // Estados Form Transacción
   const [showModal, setShowModal] = useState(false);
@@ -67,6 +53,11 @@ export default function Dashboard() {
   const [presupuestoSemanal, setPresupuestoSemanal] = useState(2000);
   const [editingPresupuesto, setEditingPresupuesto] = useState(false);
   const [tempPresupuesto, setTempPresupuesto] = useState('2000');
+
+  // Estado Modal Regla 50/30/20
+  const [showRuleModal, setShowRuleModal] = useState(false);
+  const [ruleIngresoMensual, setRuleIngresoMensual] = useState('');
+  const [ruleIngresoDisplay, setRuleIngresoDisplay] = useState('');
 
   // Estados Chat IA
   const [showAiModal, setShowAiModal] = useState(false);
@@ -327,9 +318,27 @@ export default function Dashboard() {
               }`}
           >
             <CalendarRange className="w-4 h-4" />
-            <span>Semana / Presupuesto</span>
+            <span>Presupuesto Semanal</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('metas')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-2 cursor-pointer ${activeTab === 'metas'
+                ? darkMode
+                  ? 'bg-emerald-500 text-slate-950 shadow-md'
+                  : 'bg-teal-800 text-white shadow-md'
+                : darkMode
+                  ? 'text-slate-400 hover:text-slate-200'
+                  : 'text-stone-600 hover:text-stone-900'
+              }`}
+          >
+            <Target className="w-4 h-4" />
+            <span>Metas</span>
           </button>
         </div>
+
+        {/* ALERTAS DE PRESUPUESTO */}
+        <BudgetAlerts darkMode={darkMode} />
 
         {/* SECCIÓN 1: INICIO */}
         {activeTab === 'inicio' && (
@@ -457,7 +466,18 @@ export default function Dashboard() {
 
         {/* SECCIÓN 2: SEMANA / PRESUPUESTO */}
         {activeTab === 'presupuesto' && (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-in fade-in duration-300">
+          <div className="space-y-4 animate-in fade-in duration-300">
+            <div className="flex items-center justify-between">
+              <h2 className={`text-lg font-bold ${darkMode ? 'text-slate-200' : 'text-stone-800'}`}>Presupuesto Semanal</h2>
+              <button
+                onClick={() => setShowRuleModal(true)}
+                className={`text-xs font-semibold cursor-pointer px-3 py-1.5 rounded-lg border ${darkMode ? 'text-emerald-400 border-emerald-500/40 hover:bg-emerald-500/10' : 'text-teal-800 border-teal-300 hover:bg-teal-100/60'}`}
+              >
+                Regla 50/30/20
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {/* CONTROL DE PRESUPUESTO SEMANAL */}
             <div className={`p-6 rounded-2xl border flex flex-col justify-between ${darkMode ? 'bg-slate-900/60 border-slate-800/80' : 'bg-stone-50 border-stone-200/80 shadow-sm'
               }`}>
@@ -593,8 +613,13 @@ export default function Dashboard() {
               </div>
             </div>
           </div>
+          </div>
         )}
 
+        {/* SECCIÓN 3: METAS */}
+        {activeTab === 'metas' && (
+          <GoalsPage embedded={true} onBack={() => setActiveTab('inicio')} />
+        )}
       </main>
 
       {/* BOTÓN FLOTANTE (FAB) PRINCIPAL */}
@@ -887,6 +912,97 @@ export default function Dashboard() {
                 <Send className="w-4 h-4" />
               </button>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL FLOTANTE REGLA 50/30/20 */}
+      {showRuleModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className={`w-full max-w-md rounded-3xl p-6 relative shadow-2xl border ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-stone-50 border-stone-200'
+            }`}>
+            <div className="flex items-center justify-between mb-5">
+              <div className="flex items-center space-x-3">
+                <div className={`p-2.5 rounded-2xl border ${darkMode ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-teal-100/60 border-teal-200 text-teal-800'}`}>
+                  <Scale className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className={`text-lg font-bold ${darkMode ? 'text-slate-100' : 'text-stone-900'}`}>Regla 50/30/20</h3>
+                  <p className={`text-xs ${darkMode ? 'text-slate-400' : 'text-stone-500'}`}>Distribución inteligente de ingresos</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowRuleModal(false)}
+                className={`p-2 rounded-xl transition-colors ${darkMode ? 'hover:bg-slate-800 text-slate-400' : 'hover:bg-stone-200 text-stone-500'}`}
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className={`block text-xs mb-2 font-semibold uppercase tracking-wider ${darkMode ? 'text-slate-400' : 'text-stone-500'}`}>
+                  Ingreso Semanal
+                </label>
+                <div className="relative">
+                  <span className={`absolute left-4 top-1/2 -translate-y-1/2 font-bold text-lg ${darkMode ? 'text-slate-400' : 'text-stone-500'}`}>$</span>
+                  <input
+                    type="text"
+                    value={ruleIngresoDisplay}
+                    onChange={(e) => {
+                      const raw = e.target.value.replace(/[^0-9]/g, '');
+                      setRuleIngresoMensual(raw);
+                      setRuleIngresoDisplay(raw ? Number(raw).toLocaleString('es-MX') : '');
+                    }}
+                    placeholder="0"
+                    className={`w-full rounded-xl py-3 pl-10 pr-4 text-base font-semibold focus:outline-none border transition-all ${darkMode ? 'bg-slate-950 border-slate-800 text-slate-100 focus:border-emerald-500' : 'bg-stone-100 border-stone-300 text-stone-900 focus:border-teal-700'
+                      }`}
+                  />
+                </div>
+              </div>
+
+              {ruleIngresoMensual && Number(ruleIngresoMensual) > 0 && (
+                <div className="space-y-3">
+                  <div className={`p-4 rounded-2xl border-2 ${darkMode ? 'bg-slate-950/60 border-emerald-500/30' : 'bg-teal-50 border-teal-200'}`}>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className={`text-xs font-bold uppercase tracking-wider ${darkMode ? 'text-emerald-400' : 'text-teal-800'}`}>Necesidades</span>
+                      <span className={`text-xs font-bold ${darkMode ? 'text-slate-500' : 'text-stone-500'}`}>50%</span>
+                    </div>
+                    <p className={`text-2xl font-bold ${darkMode ? 'text-slate-100' : 'text-stone-900'}`}>{formatCurrency(Number(ruleIngresoMensual) * 0.5)}</p>
+                    <p className={`text-xs mt-1 ${darkMode ? 'text-slate-500' : 'text-stone-500'}`}>Vivienda, comida, transporte</p>
+                  </div>
+
+                  <div className={`p-4 rounded-2xl border-2 ${darkMode ? 'bg-slate-950/60 border-amber-500/30' : 'bg-amber-50 border-amber-200'}`}>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className={`text-xs font-bold uppercase tracking-wider ${darkMode ? 'text-amber-400' : 'text-amber-800'}`}>Deseos</span>
+                      <span className={`text-xs font-bold ${darkMode ? 'text-slate-500' : 'text-stone-500'}`}>30%</span>
+                    </div>
+                    <p className={`text-2xl font-bold ${darkMode ? 'text-slate-100' : 'text-stone-900'}`}>{formatCurrency(Number(ruleIngresoMensual) * 0.3)}</p>
+                    <p className={`text-xs mt-1 ${darkMode ? 'text-slate-500' : 'text-stone-500'}`}>Ocio, suscripciones, gustos</p>
+                  </div>
+
+                  <div className={`p-4 rounded-2xl border-2 ${darkMode ? 'bg-slate-950/60 border-violet-500/30' : 'bg-violet-50 border-violet-200'}`}>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className={`text-xs font-bold uppercase tracking-wider ${darkMode ? 'text-violet-400' : 'text-violet-800'}`}>Ahorro</span>
+                      <span className={`text-xs font-bold ${darkMode ? 'text-slate-500' : 'text-stone-500'}`}>20%</span>
+                    </div>
+                    <p className={`text-2xl font-bold ${darkMode ? 'text-slate-100' : 'text-stone-900'}`}>{formatCurrency(Number(ruleIngresoMensual) * 0.2)}</p>
+                    <p className={`text-xs mt-1 ${darkMode ? 'text-slate-500' : 'text-stone-500'}`}>Metas, emergencias, inversión</p>
+                  </div>
+                </div>
+              )}
+
+              {!ruleIngresoMensual && (
+                <div className={`p-4 rounded-2xl border ${darkMode ? 'border-slate-800/80 text-slate-300 bg-slate-950/40' : 'border-stone-300/70 text-stone-700 bg-stone-100/60'}`}>
+                  <div className="flex items-start space-x-2">
+                    <Scale className="w-4 h-4 flex-shrink-0 text-teal-700 dark:text-emerald-400 mt-0.5" />
+                    <p className="text-xs font-medium">
+                      Ingresa tu ingreso semanal para ver cómo distribuir tus finanzas con la regla 50/30/20.
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}

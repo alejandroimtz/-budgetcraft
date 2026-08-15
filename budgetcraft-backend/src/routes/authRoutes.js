@@ -4,11 +4,11 @@ const router = express.Router();
 const { registrarUsuario, iniciarSesion, obtenerPerfil } = require('../controllers/authController');
 const { verificarToken } = require('../middlewares/auth');
 
-// 🟢 Rutas PÚBLICAS (NO llevan verificarToken)
+// Rutas PÚBLICAS (NO llevan verificarToken)
 router.post('/register', registrarUsuario);
 router.post('/login', iniciarSesion);
 
-// 🔒 Ruta PROTEGIDA (Sí lleva verificarToken)
+// Ruta PROTEGIDA (Sí lleva verificarToken)
 router.get('/me', verificarToken, obtenerPerfil);
 
 module.exports = router;

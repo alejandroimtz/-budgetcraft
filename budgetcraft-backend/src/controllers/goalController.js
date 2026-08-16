@@ -24,7 +24,7 @@ const obtenerMetas = async (req, res) => {
 // Crear una nueva meta
 const crearMeta = async (req, res) => {
   const usuarioId = req.usuario.id;
-  const { nombre, descripcion, monto_objetivo, fecha_objetivo, icono, color } = req.body;
+  const { nombre, descripcion, monto_objetivo, fecha_objetivo, icono, color } = req.body || {};
 
   if (!nombre || !monto_objetivo) {
     return res.status(400).json({
@@ -46,7 +46,11 @@ const crearMeta = async (req, res) => {
     });
   } catch (error) {
     console.error('Error al crear meta:', error);
-    res.status(500).json({ status: 'error', message: 'Error interno del servidor' });
+    res.status(500).json({
+      status: 'error',
+      message: 'Error interno del servidor',
+      detail: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 };
 

@@ -129,10 +129,10 @@ const getUserBudgets = async (req, res) => {
       data: result.rows
     });
   } catch (error) {
-    console.error('Error al obtener presupuestos:', error);
     return res.status(500).json({
       success: false,
-      message: 'Error al obtener los presupuestos.'
+      message: 'Error al obtener los presupuestos.',
+      detail: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };

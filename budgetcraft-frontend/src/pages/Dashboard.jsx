@@ -12,7 +12,7 @@ import {
 import { BudgetAlerts } from '../components/budget/BudgetAlerts';
 import GoalsPage from './GoalsPage';
 import WeeklyCalendar from '../components/budget/WeeklyCalendar';
-import { getPresupuestoSemanal, destinarPresupuestoSemanal } from '../services/budgetSemanalService';
+import { getPresupuestoSemanal, destinarPresupuestoSemanal, reiniciarPresupuestoSemanal, getConfiguracionPresupuesto, actualizarConfiguracionPresupuesto } from '../services/budgetSemanalService';
 
 // Paleta de colores sobrios y mate para categorías
 const CATEGORY_PALETTE = [
@@ -52,11 +52,29 @@ export default function Dashboard() {
   const [nuevaCategoria, setNuevaCategoria] = useState('');
   const [colorCategoria, setColorCategoria] = useState(CATEGORY_PALETTE[0]);
 
+  const DESCRIPCION_ASIGNACION_PRESUPUESTO = 'Asignación a Presupuesto Semanal';
+
   // Estado Presupuesto Semanal (persistido en backend vía weekly_budgets)
   const [presupuestoSemanal, setPresupuestoSemanal] = useState(0);
   const [editingPresupuesto, setEditingPresupuesto] = useState(false);
   const [tempPresupuesto, setTempPresupuesto] = useState('');
   const [guardandoPresupuesto, setGuardandoPresupuesto] = useState(false);
+
+  // Estado Configuración Reinicio Presupuesto
+  const [showConfigModal, setShowConfigModal] = useState(false);
+  const [diaReinicio, setDiaReinicio] = useState(1); // 1 = Lunes
+  const [horaReinicio, setHoraReinicio] = useState('00:00');
+  const [guardandoConfig, setGuardandoConfig] = useState(false);
+
+  const DIAS_SEMANA = [
+    { valor: 0, nombre: 'Domingo' },
+    { valor: 1, nombre: 'Lunes' },
+    { valor: 2, nombre: 'Martes' },
+    { valor: 3, nombre: 'Miércoles' },
+    { valor: 4, nombre: 'Jueves' },
+    { valor: 5, nombre: 'Viernes' },
+    { valor: 6, nombre: 'Sábado' },
+  ];
 
   // Estado Filtro Historial
   const [filtroHistorial, setFiltroHistorial] = useState('todos');
@@ -83,16 +101,19 @@ export default function Dashboard() {
   const fetchDashboardData = async () => {
     try {
       setLoading(true);
-      const [sumRes, txRes, catRes, presupuestoRes] = await Promise.all([
+      const [sumRes, txRes, catRes, presupuestoRes, configRes] = await Promise.all([
         api.get('/dashboard/summary'),
         api.get('/transactions'),
         api.get('/categories'),
-        getPresupuestoSemanal()
+        getPresupuestoSemanal(),
+        getConfiguracionPresupuesto()
       ]);
       setSummary(sumRes.data.data);
       setTransactions(txRes.data.data);
       setCategories(catRes.data.data);
       setPresupuestoSemanal(parseFloat(presupuestoRes.data.monto_destinado));
+      setDiaReinicio(configRes.data.dia_reinicio);
+      setHoraReinicio(configRes.data.hora_reinicio.slice(0, 5)); // 'HH:MM'
     } catch (err) {
       console.error('Error al cargar datos:', err);
     } finally {
@@ -131,7 +152,9 @@ export default function Dashboard() {
     hace7Dias.setDate(hace7Dias.getDate() - 7);
 
     const gastosSemana = transactions.filter(t =>
-      t.tipo === 'gasto' && new Date(t.fecha) >= hace7Dias
+      t.tipo === 'gasto' &&
+      t.descripcion !== DESCRIPCION_ASIGNACION_PRESUPUESTO &&
+      new Date(t.fecha) >= hace7Dias
     );
 
     const totalGastadoSemana = gastosSemana.reduce((acc, t) => acc + parseFloat(t.monto), 0);
@@ -296,13 +319,8 @@ export default function Dashboard() {
   const handleDestinarPresupuesto = async () => {
     const valor = parseFloat(tempPresupuesto) || 0;
 
-    if (valor <= 0) {
-      alert('Ingresa un monto válido mayor a 0.');
-      return;
-    }
-
-    if (valor > summary.balance_total) {
-      alert('No cuentas con saldo suficiente en tu balance total para destinar ese monto.');
+    if (valor < 0) {
+      alert('Ingresa un monto válido.');
       return;
     }
 
@@ -321,6 +339,36 @@ export default function Dashboard() {
     }
   };
 
+  const handleReiniciarPresupuesto = async () => {
+    try {
+      setGuardandoPresupuesto(true);
+      await reiniciarPresupuestoSemanal();
+      setPresupuestoSemanal(0);
+      setEditingPresupuesto(false);
+      setTempPresupuesto('');
+      fetchDashboardData();
+    } catch (err) {
+      console.error('Error al reiniciar presupuesto:', err);
+      alert(err.response?.data?.error || 'Ocurrió un error al reiniciar el presupuesto.');
+    } finally {
+      setGuardandoPresupuesto(false);
+    }
+  };
+
+  const handleGuardarConfig = async () => {
+    try {
+      setGuardandoConfig(true);
+      await actualizarConfiguracionPresupuesto(diaReinicio, horaReinicio);
+      setShowConfigModal(false);
+      fetchDashboardData();
+    } catch (err) {
+      console.error('Error al guardar configuración:', err);
+      alert('Ocurrió un error al guardar la configuración.');
+    } finally {
+      setGuardandoConfig(false);
+    }
+  };
+
   const formatCurrency = (value) => {
     return new Intl.NumberFormat('es-MX', {
       style: 'currency',
@@ -328,6 +376,8 @@ export default function Dashboard() {
       minimumFractionDigits: 2
     }).format(value || 0);
   };
+
+  const balanceDisponible = Math.max(0, (summary.balance_total || 0) - (presupuestoSemanal || 0));
 
   const porcentajePresupuesto = Math.min(
     100,
@@ -475,11 +525,11 @@ export default function Dashboard() {
                   <span className={`text-xs font-semibold uppercase tracking-wider ${darkMode ? 'text-slate-400' : 'text-stone-500'}`}>Balance Total</span>
                 </div>
                 <p className={`text-2xl sm:text-3xl font-bold tracking-tight ${darkMode ? 'text-slate-100' : 'text-stone-900'}`}>
-                  {formatCurrency(summary.balance_total)}
+                  {formatCurrency(balanceDisponible)}
                 </p>
                 <div className={`mt-3 flex items-center text-xs ${darkMode ? 'text-slate-500' : 'text-stone-500'}`}>
                   <BarChart3 className="w-3.5 h-3.5 mr-1" />
-                  Ingresos acumulados vs Gastos
+                  Balance real después del presupuesto semanal
                 </div>
               </div>
 
@@ -630,15 +680,23 @@ export default function Dashboard() {
                       <h3 className={`font-bold ${darkMode ? 'text-slate-200' : 'text-stone-800'}`}>Presupuesto Semanal</h3>
                     </div>
                     {!editingPresupuesto ? (
-                      <button
-                        onClick={() => {
-                          setTempPresupuesto('');
-                          setEditingPresupuesto(true);
-                        }}
-                        className="text-xs text-teal-800 dark:text-emerald-400 hover:underline cursor-pointer font-semibold"
-                      >
-                        Destinar
-                      </button>
+                      <div className="flex items-center space-x-2">
+                        <button
+                          onClick={() => {
+                            setTempPresupuesto('');
+                            setEditingPresupuesto(true);
+                          }}
+                          className="text-xs text-teal-800 dark:text-emerald-400 hover:underline cursor-pointer font-semibold"
+                        >
+                          Destinar
+                        </button>
+                        <button
+                          onClick={() => setShowConfigModal(true)}
+                          className="text-xs text-stone-600 dark:text-slate-400 hover:underline cursor-pointer font-semibold"
+                        >
+                          Configurar reinicio
+                        </button>
+                      </div>
                     ) : (
                       <div className="flex items-center space-x-2">
                         <button
@@ -675,14 +733,14 @@ export default function Dashboard() {
                           }`}
                       />
                       <p className={`text-xs mt-1.5 ${darkMode ? 'text-slate-400' : 'text-stone-500'}`}>
-                        Balance disponible: <strong>{formatCurrency(summary.balance_total)}</strong>
+                        Balance disponible: <strong>{formatCurrency(balanceDisponible)}</strong>
                       </p>
                     </div>
                   ) : (
                     <div className="mb-4">
                       <p className={`text-3xl font-bold ${darkMode ? 'text-slate-100' : 'text-stone-900'}`}>{formatCurrency(presupuestoSemanal)}</p>
                       <p className={`text-xs mt-1 ${darkMode ? 'text-slate-400' : 'text-stone-500'}`}>
-                        Balance disponible: <strong className={darkMode ? 'text-slate-200' : 'text-stone-800'}>{formatCurrency(summary.balance_total)}</strong>
+                        Balance disponible: <strong className={darkMode ? 'text-slate-200' : 'text-stone-800'}>{formatCurrency(balanceDisponible)}</strong>
                       </p>
                       <p className={`text-xs mt-1 ${darkMode ? 'text-slate-400' : 'text-stone-500'}`}>
                         Gastado esta semana: <strong className="text-rose-800 dark:text-rose-400">{formatCurrency(statsSemanales.totalGastadoSemana)}</strong>
@@ -1168,6 +1226,68 @@ export default function Dashboard() {
                   </div>
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showConfigModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className={`w-full max-w-sm rounded-3xl p-6 relative shadow-2xl border ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-stone-50 border-stone-200'}`}>
+            <div className="flex items-center justify-between mb-5">
+              <div className="flex items-center space-x-3">
+                <div className={`p-2.5 rounded-2xl border ${darkMode ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-teal-100/60 border-teal-200 text-teal-800'}`}>
+                  <CalendarRange className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className={`text-lg font-bold ${darkMode ? 'text-slate-100' : 'text-stone-900'}`}>Reinicio del Presupuesto</h3>
+                  <p className={`text-xs ${darkMode ? 'text-slate-400' : 'text-stone-500'}`}>Elige cuándo se reinicia cada semana</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowConfigModal(false)}
+                className={`p-2 rounded-xl transition-colors ${darkMode ? 'hover:bg-slate-800 text-slate-400' : 'hover:bg-stone-200 text-stone-500'}`}
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className={`block text-xs mb-1.5 font-semibold uppercase ${darkMode ? 'text-slate-400' : 'text-stone-500'}`}>Día de reinicio</label>
+                <select
+                  value={diaReinicio}
+                  onChange={(e) => setDiaReinicio(Number(e.target.value))}
+                  className={`w-full rounded-xl py-2.5 px-4 text-sm focus:outline-none cursor-pointer border ${darkMode ? 'bg-slate-950 border-slate-800 text-slate-100' : 'bg-stone-100 border-stone-300 text-stone-900 focus:border-teal-700'}`}
+                >
+                  {DIAS_SEMANA.map((d) => (
+                    <option key={d.valor} value={d.valor}>{d.nombre}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className={`block text-xs mb-1.5 font-semibold uppercase ${darkMode ? 'text-slate-400' : 'text-stone-500'}`}>Hora de reinicio</label>
+                <input
+                  type="time"
+                  value={horaReinicio}
+                  onChange={(e) => setHoraReinicio(e.target.value)}
+                  className={`w-full rounded-xl py-2.5 px-4 text-sm focus:outline-none border ${darkMode ? 'bg-slate-950 border-slate-800 text-slate-100' : 'bg-stone-100 border-stone-300 text-stone-900 focus:border-teal-700'}`}
+                />
+              </div>
+
+              <div className={`p-3 rounded-xl border text-xs flex items-start space-x-2 ${darkMode ? 'border-slate-800/80 text-slate-400 bg-slate-950/40' : 'border-stone-300/70 text-stone-600 bg-stone-100/60'}`}>
+                <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5 text-teal-700 dark:text-emerald-400" />
+                <span>Al llegar ese día y hora, el dinero que no hayas usado de tu presupuesto semanal regresará automáticamente a tu Balance Total.</span>
+              </div>
+
+              <button
+                onClick={handleGuardarConfig}
+                disabled={guardandoConfig}
+                className="w-full bg-teal-800 dark:bg-emerald-500 hover:bg-teal-700 text-white dark:text-slate-950 font-bold py-2.5 rounded-xl text-sm cursor-pointer disabled:opacity-50"
+              >
+                {guardandoConfig ? 'Guardando...' : 'Guardar Configuración'}
+              </button>
             </div>
           </div>
         </div>

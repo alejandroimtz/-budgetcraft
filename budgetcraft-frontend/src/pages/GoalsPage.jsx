@@ -16,7 +16,7 @@ export default function GoalsPage({ onBack, embedded }) {
     const fetchGoals = async () => {
         try {
             const data = await getGoals();
-            if (data.success) {
+            if (data.status === 'success' || data.success) {
                 setGoals(data.data);
             }
         } catch (err) {

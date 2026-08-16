@@ -63,19 +63,23 @@ Pregunta del usuario: ${mensaje}`;
         // 4. Extraer el texto real de la estructura de respuesta de Interactions API
         let textoRespuesta = "";
 
-        if (data.outputs && data.outputs.length > 0) {
-            // Intenta leer el campo text dentro del output o el arreglo de partes
+        if (Array.isArray(data.steps) && data.steps.length > 0) {
+            const step = data.steps[0];
+            if (Array.isArray(step.content) && step.content.length > 0) {
+                textoRespuesta = step.content[0]?.text || "";
+            }
+        }
+
+        if (!textoRespuesta && Array.isArray(data.outputs) && data.outputs.length > 0) {
             const firstOutput = data.outputs[0];
             textoRespuesta = firstOutput.text
                 || (firstOutput.contents && firstOutput.contents[0]?.parts?.[0]?.text)
                 || (firstOutput.parts && firstOutput.parts[0]?.text);
         }
 
-        // Resguardos adicionales si la estructura varía
         if (!textoRespuesta) {
             textoRespuesta = data.output
-                || (data.candidates && data.candidates[0]?.content?.parts?.[0]?.text)
-                || (data.steps && data.steps[0]?.content?.[0]?.text);
+                || (data.candidates && data.candidates[0]?.content?.parts?.[0]?.text);
         }
 
         // Imprimir en consola del backend para verificar la estructura recibida si hiciera falta

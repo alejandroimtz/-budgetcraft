@@ -85,6 +85,37 @@ const obtenerCategorias = async (req, res) => {
   }
 };
 
+// 1.1 CREAR UNA NUEVA CATEGORÍA
+const crearCategoria = async (req, res) => {
+  const usuario_id = req.usuario.id;
+  const { nombre, color } = req.body;
+
+  if (!nombre || !nombre.trim()) {
+    return res.status(400).json({
+      status: 'error',
+      message: 'El nombre de la categoría es obligatorio.'
+    });
+  }
+
+  try {
+    const nuevaCategoria = await db.query(
+      `INSERT INTO categorias (nombre, tipo, color)
+       VALUES ($1, $2, $3)
+       RETURNING *`,
+      [nombre.trim(), 'gasto', color || '#475569']
+    );
+
+    res.status(201).json({
+      status: 'success',
+      message: 'Categoría creada correctamente',
+      data: nuevaCategoria.rows[0]
+    });
+  } catch (error) {
+    console.error('Error al crear categoría:', error);
+    res.status(500).json({ status: 'error', message: 'Error interno del servidor' });
+  }
+};
+
 // 2. CREAR UNA NUEVA TRANSACCIÓN (Ingreso o Gasto)
 const crearTransaccion = async (req, res) => {
   const usuario_id = req.usuario.id; // Obtenido del token JWT
@@ -231,6 +262,7 @@ const obtenerResumenDashboard = async (req, res) => {
 
 module.exports = {
   obtenerCategorias,
+  crearCategoria,
   crearTransaccion,
   obtenerTransacciones,
   eliminarTransaccion,

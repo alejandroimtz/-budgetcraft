@@ -4,6 +4,7 @@ const router = express.Router();
 const { verificarToken } = require('../middleware/auth');
 const {
   obtenerCategorias,
+  crearCategoria,
   crearTransaccion,
   obtenerTransacciones,
   eliminarTransaccion,
@@ -15,6 +16,8 @@ router.use(verificarToken);
 
 // Endpoints de Categorías
 router.get('/categories', obtenerCategorias);
+router.post('/categories', crearCategoria);
+router.post('/categories', crearCategoria);
 
 // Endpoints de Transacciones
 router.get('/transactions', obtenerTransacciones);
